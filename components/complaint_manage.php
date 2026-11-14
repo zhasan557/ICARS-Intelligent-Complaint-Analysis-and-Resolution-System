@@ -9,6 +9,48 @@ $needsNote   = json_encode(STATUS_NEEDS_NOTE);
 ?>
 <div id="manage-panel">
 
+<?php if (!$recommendation): ?>
+<div class="card mb-4 border-warning"><div class="card-body">
+    <h2 class="h6">No rule-based recommendation is saved</h2>
+    <p class="small text-muted">The complaint remains available for manual review. You can retry the local analysis.</p>
+    <form data-endpoint="api/admin/complaints/recommendation.php" novalidate>
+        <input type="hidden" name="id" value="<?= e($c['id']) ?>"><input type="hidden" name="action" value="retry">
+        <div class="form-alert alert alert-danger d-none py-2 small" role="alert"></div>
+        <button type="submit" class="btn btn-sm btn-outline-primary">Retry rule analysis</button>
+    </form>
+</div></div>
+<?php endif; ?>
+
+<?php if ($recommendation): $suggestion = $recommendation['suggestion']; $levelIds = array_column($levels, 'id', 'name'); ?>
+<div class="card mb-4 border-primary"><div class="card-body">
+    <h2 class="h6 text-uppercase mb-2">Rule based triage recommendation</h2>
+    <p class="small text-muted">Deterministic keyword and history matching; no generative model is used. Strength: <?= e((string)round(((float)($suggestion['confidence'] ?? 0))*100)) ?>% · Status: <?= e($recommendation['status']) ?></p>
+    <dl class="row small mb-2">
+        <dt class="col-5">Category</dt><dd class="col-7"><?= e((string)($suggestion['category_name'] ?? 'No match')) ?></dd>
+        <dt class="col-5">Priority / severity</dt><dd class="col-7"><?= e((string)($suggestion['priority'] ?? '—')) ?> / <?= e((string)($suggestion['severity'] ?? '—')) ?></dd>
+        <dt class="col-5">Department</dt><dd class="col-7"><?= e((string)($suggestion['department_name'] ?? 'No match')) ?></dd>
+        <dt class="col-5">Suggested staff</dt><dd class="col-7"><?= e((string)($suggestion['staff_name'] ?? 'No suitable available staff')) ?> <span class="text-muted">(not assigned)</span></dd>
+    </dl>
+    <p class="small mb-1"><strong>Rationale</strong></p><ul class="small"><?php foreach (($suggestion['rationale'] ?? []) as $reason): ?><li><?= e($reason) ?></li><?php endforeach; ?></ul>
+    <p class="small mb-1"><strong>Resolution guidance</strong> <?= empty($suggestion['historical_cases']) ? '<span class="text-muted">(no relevant resolved case; generic steps)</span>' : '(matched resolved cases)' ?></p>
+    <ol class="small"><?php foreach (($suggestion['resolution'] ?? []) as $step): ?><li><?= e($step) ?></li><?php endforeach; ?></ol>
+    <?php if ($recommendation['status'] === 'pending'): ?>
+    <form data-endpoint="api/admin/complaints/recommendation.php" novalidate>
+        <input type="hidden" name="id" value="<?= e($c['id']) ?>">
+        <div class="form-alert alert alert-danger d-none py-2 small" role="alert"></div>
+        <div class="row g-2">
+            <?php foreach ([['category_id','Category',$categories,$suggestion['category_id']??null],['priority_id','Priority',$levels,$levelIds[$suggestion['priority']??'']??null],['severity_id','Severity',$levels,$levelIds[$suggestion['severity']??'']??null],['department_id','Department',$departments,$suggestion['department_id']??null]] as [$key,$label,$options,$selected]): ?>
+            <div class="col-6"><label class="form-label small" for="r-<?= e($key) ?>"><?= e($label) ?></label><select class="form-select form-select-sm" id="r-<?= e($key) ?>" name="<?= e($key) ?>"><option value="">— Not set —</option><?php foreach($options as $o): ?><option value="<?= e($o['id']) ?>"<?= (string)$o['id']===(string)$selected?' selected':'' ?>><?= e($o['name']) ?></option><?php endforeach; ?></select></div>
+            <?php endforeach; ?>
+        </div>
+        <div class="d-flex flex-wrap gap-2 mt-3"><button type="submit" class="btn btn-sm btn-success" name="action" value="accept">Accept suggestion</button><button type="submit" class="btn btn-sm btn-outline-primary" name="action" value="modify">Save modified values</button><button type="submit" class="btn btn-sm btn-outline-secondary" name="action" value="reject">Reject suggestion</button></div>
+    </form>
+    <?php elseif ($recommendation['decision']): ?><p class="small mb-0">Decision recorded: <?= e($recommendation['status']) ?></p><?php endif; ?>
+</div></div>
+<?php endif; ?>
+
+<?php if ($isAdminView): ?>
+
 <!-- Status -->
 <div class="card mb-4"><div class="card-body">
     <h2 class="h6 text-uppercase text-muted mb-3">Update status</h2>
@@ -115,3 +157,4 @@ $needsNote   = json_encode(STATUS_NEEDS_NOTE);
 </div></div>
 
 </div>
+<?php endif; ?>

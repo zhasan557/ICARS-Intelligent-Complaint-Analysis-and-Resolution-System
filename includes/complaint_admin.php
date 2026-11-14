@@ -45,6 +45,17 @@ function complaint_staff_options(): array
     );
 }
 
+/** Open complaints assigned to this staff member, for their own work queue. */
+function complaint_assigned_to_staff(int $staffId): array
+{
+    return db_all("SELECT c.id,c.complaint_no,c.title,c.updated_at,s.name AS status,cat.name AS category,lp.name AS priority
+                     FROM complaints c JOIN complaint_statuses s ON s.id=c.status_id
+                LEFT JOIN complaint_categories cat ON cat.id=c.category_id
+                LEFT JOIN complaint_levels lp ON lp.id=c.priority_id
+                    WHERE c.assigned_to=? AND s.name IN ('Assigned','In Progress','Reopened')
+                 ORDER BY lp.sort_order DESC,c.updated_at DESC",[$staffId]);
+}
+
 /* ---------- History ---------- */
 function complaint_history_add(int $complaintId, string $event, ?int $fromStatusId, ?int $toStatusId, ?int $actorId,
                                string $visibility, ?string $note, ?array $old = null, ?array $new = null): void

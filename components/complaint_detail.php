@@ -94,7 +94,17 @@ $current  = array_search($reopened ? STATUS_UNDER_REVIEW : $c['status'], $stages
                             <ul class="small text-muted mb-0 ps-3">
                                 <?php foreach ($new as $k => $v):
                                     if ($k === 'note') { if ($v) { echo '<li>Admin note: ' . e($v) . '</li>'; } continue; } ?>
-                                    <li><?= e(history_field_label($k)) ?>: <?= e($old[$k] ?? '—') ?> → <strong><?= e($v ?? '—') ?></strong></li>
+                                    <?php if (is_array($v)): ?>
+                                        <li><?= e(history_field_label($k)) ?>:
+                                            <ul class="small mb-0">
+                                            <?php foreach ($v as $subKey => $subValue): ?>
+                                                <li><?= e(history_field_label((string)$subKey)) ?>: <strong><?= e(is_scalar($subValue) ? (string)$subValue : ($subValue === null ? '—' : '[details]')) ?></strong></li>
+                                            <?php endforeach; ?>
+                                            </ul>
+                                        </li>
+                                    <?php else: ?>
+                                        <li><?= e(history_field_label($k)) ?>: <?= e(is_scalar($old[$k] ?? null) ? (string)($old[$k] ?? '—') : '—') ?> → <strong><?= e(is_scalar($v) ? (string)$v : ($v === null ? '—' : '[details]')) ?></strong></li>
+                                    <?php endif; ?>
                                 <?php endforeach; ?>
                             </ul>
                         <?php endif; ?>
