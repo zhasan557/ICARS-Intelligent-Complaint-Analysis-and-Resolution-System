@@ -76,12 +76,24 @@ function complaint_intelligence_rules(array $complaint, array $categories, array
     $steps=[]; $similar=[];
     foreach ($resolved as $case) {
         $same = $chosen && (int)$case['category_id'] === (int)$chosen['id'];
-        $overlap = ci_score_text($text, array_fill_keys(array_filter(preg_split('/\W+/u', ci_normalize((string)$case['description'])) ?: []), 1));
+        $overlap = ci_score_text(
+            $text, 
+            array_fill_keys(
+                array_filter(
+                    preg_split('/\W+/u', ci_normalize((string)$case['description'])) ?: []
+                    ),
+                    1
+                ))
+            ;
         $sc = ($same ? 5 : 0) + min(5,$overlap);
         if ($sc > 0) $similar[]=['case'=>$case,'score'=>$sc];
     }
     usort($similar, static fn($a,$b)=>$b['score']<=>$a['score']);
-    foreach (array_slice($similar,0,3) as $item) if (trim((string)$item['case']['resolution']) !== '') $steps[]=(string)$item['case']['resolution'];
+
+    foreach (array_slice($similar,0,3) as $item) 
+        if (trim((string)$item['case']['resolution']) !== '') 
+            $steps[]=(string)$item['case']['resolution'];
+    
     $hasHistory = count($steps)>0;
     if (!$hasHistory) $steps = ['Review the reported issue and verify it at the stated location.', 'Route the case to the responsible department for diagnosis.', 'Record the corrective action and confirm the outcome with the complainant.'];
     return ['category_id'=>$chosen ? (int)$chosen['id'] : null, 'category_name'=>$chosen['name'] ?? null, 'priority'=>$priority,'severity'=>$severity,
@@ -94,7 +106,7 @@ function complaint_intelligence_rules(array $complaint, array $categories, array
 function complaint_intelligence_context(): array
 {
     $staff=db_all("SELECT u.id,u.full_name,sp.department_id,sp.expertise, (SELECT COUNT(*) FROM complaints c JOIN complaint_statuses s ON s.id=c.status_id WHERE c.assigned_to=u.id AND s.name IN ('Assigned','In Progress','Reopened')) open_load FROM users u JOIN roles r ON r.id=u.role_id AND r.name='staff' JOIN staff_profiles sp ON sp.user_id=u.id WHERE u.is_active=1 AND sp.is_available=1");
-    $resolved=db_all("SELECT c.category_id,c.description,h.note AS resolution FROM complaints c JOIN complaint_statuses s ON s.id=c.status_id JOIN complaint_history h ON h.complaint_id=c.id AND h.event_type='status_changed' AND h.to_status_id=c.status_id WHERE s.name='Resolved' AND h.note IS NOT NULL ORDER BY c.resolved_at DESC LIMIT 100");
+    $resolved=db_all("SELECT category_id,description,resolution_details AS resolution FROM complaint_resolution_knowledge ORDER BY resolved_at DESC LIMIT 100");
     return [complaint_categories(), departments_all(), $staff, $resolved];
 }
 
@@ -112,52 +124,148 @@ function complaint_intelligence_attempt(int $complaintId, callable $analyser): b
 
 function complaint_intelligence_store(int $id, array $suggestion): void
 {
-    db_exec('INSERT INTO complaint_recommendations (complaint_id,suggestion_json,status) VALUES (?, ?, \'pending\') ON DUPLICATE KEY UPDATE suggestion_json=VALUES(suggestion_json), status=\'pending\', decision_json=NULL, decided_by=NULL, decided_at=NULL', [$id,json_encode($suggestion,JSON_UNESCAPED_UNICODE|JSON_THROW_ON_ERROR)]);
-    complaint_history_add($id,'recommendation_generated',null,null,null,'internal','Rule-based triage recommendation generated',null,['confidence'=>$suggestion['confidence']]);
+    db_exec(
+        'INSERT INTO complaint_recommendations 
+        (complaint_id,suggestion_json,status) 
+        VALUES (?, ?, \'pending\') 
+        ON DUPLICATE KEY UPDATE 
+        suggestion_json=VALUES(suggestion_json), 
+        status=\'pending\', 
+        decision_json=NULL, 
+        decided_by=NULL, 
+        decided_at=NULL', 
+        [
+            $id,json_encode($suggestion,JSON_UNESCAPED_UNICODE|JSON_THROW_ON_ERROR)
+        ]
+    );
+    complaint_history_add(
+        $id,
+        'recommendation_generated',
+        null,
+        null,
+        null,
+        'internal',
+        'Rule-based triage recommendation generated',
+        null,
+        ['confidence'=>$suggestion['confidence']]
+    );
 }
 
 /** Retry a previously failed/missing analysis without changing the complaint or assigning staff. */
 function complaint_intelligence_retry(int $id): void
 {
-    if (complaint_intelligence_get($id)) throw new ValidationException(['form'=>'A recommendation already exists for this complaint.']);
+    if (complaint_intelligence_get($id)) 
+        throw new ValidationException([
+            'form'=>'A recommendation already exists for this complaint.'
+        ]);
     $c=complaint_find($id);
-    if (!$c) throw new ValidationException(['form'=>'Complaint not found.'],'Complaint not found.',404);
+
+    if (!$c) 
+        throw new ValidationException(
+            ['form'=>'Complaint not found.'],
+            'Complaint not found.',
+            404
+        );
     [$categories,$departments,$staff,$resolved]=complaint_intelligence_context();
-    $suggestion=complaint_intelligence_rules($c,$categories,$departments,$staff,$resolved);
+    $suggestion=complaint_intelligence_rules(
+        $c,
+        $categories,
+        $departments,
+        $staff,
+        $resolved
+    );
     complaint_intelligence_store($id,$suggestion);
 }
 
 function complaint_intelligence_get(int $id): ?array
 {
-    $row=db_one('SELECT suggestion_json,status,decision_json,decided_by,decided_at FROM complaint_recommendations WHERE complaint_id=?',[$id]);
+    $row=db_one(
+        'SELECT suggestion_json,status,decision_json,decided_by,decided_at 
+        FROM complaint_recommendations 
+        WHERE complaint_id=?',
+        [$id]
+    );
     if (!$row) return null;
-    $row['suggestion']=json_decode($row['suggestion_json'],true) ?: [];
-    $row['decision']=json_decode((string)$row['decision_json'],true) ?: null;
+
+    $row['suggestion']=
+        json_decode($row['suggestion_json'],true) ?: [];
+    $row['decision']=
+        json_decode((string)$row['decision_json'],true) ?: null;
     return $row;
 }
 
 /** Admins may review any recommendation; staff may review only their own assigned cases. */
 function complaint_intelligence_can_review(array $complaint, ?string $role, ?int $actorId): bool
 {
-    return $role === ROLE_ADMIN || ($role === ROLE_STAFF && $actorId !== null && (int)($complaint['assigned_to'] ?? 0) === $actorId);
+    return $role === ROLE_ADMIN || 
+    (
+        $role === ROLE_STAFF && 
+        $actorId !== null && 
+        (int)($complaint['assigned_to'] ?? 0) === $actorId
+    );
 }
 
 function complaint_intelligence_decide(int $id,string $action,array $input,int $actor): void
 {
-    if (!in_array($action,['accept','modify','reject'],true)) throw new ValidationException(['action'=>'Choose accept, modify or reject.']);
+    if (!in_array($action,['accept','modify','reject'],true)) 
+        throw new ValidationException([
+            'action'=>'Choose accept, modify or reject.'
+        ]);
+
     $rec=complaint_intelligence_get($id);
-    if (!$rec) throw new ValidationException(['form'=>'No recommendation exists for this complaint.'], 'Recommendation not found.',404);
+
+    if (!$rec) 
+        throw new ValidationException(
+            ['form'=>'No recommendation exists for this complaint.'], 'Recommendation not found.',
+            404
+        );
+
     $decision=['action'=>$action];
+    
     if ($action!=='reject') {
         $suggestion=$rec['suggestion'];
-        $values=$action==='accept' ? ['category_id'=>$suggestion['category_id'],'priority_id'=>db_value('SELECT id FROM complaint_levels WHERE name=?',[$suggestion['priority']]),'severity_id'=>db_value('SELECT id FROM complaint_levels WHERE name=?',[$suggestion['severity']]),'department_id'=>$suggestion['department_id']] : $input;
+        $values=$action==='accept' ? [
+            'category_id'=>$suggestion['category_id'],'priority_id'=>db_value(
+                'SELECT id FROM complaint_levels WHERE name=?',[$suggestion['priority']]
+            ),
+            'severity_id'=>db_value(
+                'SELECT id FROM complaint_levels WHERE name=?',[$suggestion['severity']]
+            ),
+            'department_id'=>$suggestion['department_id']
+        ] 
+        : $input;
         complaint_classify($id,$values,'Recommendation '.$action,$actor);
         $decision['values']=$values;
     }
     db_transaction(function() use($id,$action,$decision,$actor):void {
         $c=complaint_lock($id);
-        db_exec('UPDATE complaint_recommendations SET status=?,decision_json=?,decided_by=?,decided_at=NOW() WHERE complaint_id=?',[$action,json_encode($decision,JSON_UNESCAPED_UNICODE|JSON_THROW_ON_ERROR),$actor,$id]);
-        complaint_history_add($id,'recommendation_'.$action,(int)$c['status_id'],(int)$c['status_id'],$actor,'internal','Recommendation '.$action,null,$decision);
-        audit_log('complaint_recommendation_'.$action,'complaint',$id,null,$decision,$actor);
+        db_exec(
+            'UPDATE complaint_recommendations 
+            SET status=?,decision_json=?,decided_by=?,decided_at=NOW() WHERE complaint_id=?',
+            [
+                $action,
+                json_encode($decision,JSON_UNESCAPED_UNICODE|JSON_THROW_ON_ERROR),
+                $actor,
+                $id
+            ]
+        );
+        complaint_history_add(
+            $id,
+            'recommendation_'.$action,
+            (int)$c['status_id'],
+            (int)$c['status_id'],
+            $actor,'internal',
+            'Recommendation '.$action,
+            null,
+            $decision
+        );
+        audit_log(
+            'complaint_recommendation_'.$action,
+            'complaint',
+            $id,
+            null,
+            $decision,
+            $actor
+        );
     });
 }
